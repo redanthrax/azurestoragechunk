@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Chunked File Upload to Azure Blob Storage</title>
+      <script src="//unpkg.com/alpinejs" defer></script>
+  </head>
+  <body>
+    <div x-data="fileUploader()">
+      <input type="file" @change="selectFile($event)">
+      <button @click="uploadFile">Upload File</button>
+    </div>
+
+  <script>
+    function fileUploader() {
+        return {
+            file: null,
+            containerUrl: '',
+            sasToken: '',
+            blobName: '',
+
+            selectFile(event) {
+                this.file = event.target.files[0];
+                this.blobName = this.file.name;
+            },
+
+            async uploadFile() {
+                if (!this.file) {
+                    console.error('No file selected');
+                    return;
+                }
+
+                const chunkSize = 4 * 1024 * 1024; // 4MB
+                let start = 0;
+                let blockIds = [];
+                const totalBlocks = Math.ceil(this.file.size / chunkSize);
+                const blockIdLength = 64; // Max length for a Base64 encoded block ID
+
+                while (start < this.file.size) {
+                    const chunk = this.file.slice(start, start + chunkSize);
+                    const blockId = this.createBlockId(start / chunkSize, totalBlocks, blockIdLength);
+                    blockIds.push(blockId);
+                    await this.uploadChunk(chunk, blockId);
+                    start += chunkSize;
+                }
+
+                await this.finalizeUpload(blockIds);
+            },
+
+            createBlockId(index, totalBlocks, maxLength) {
+                // Generate a fixed-length block ID
+                const rawId = index.toString().padStart(totalBlocks.toString().length, '0');
+                const encodedId = btoa(rawId);
+                return encodedId.substr(0, maxLength);
+            },
+
+            async uploadChunk(chunk, blockId) {
+                const encodedBlockId = encodeURIComponent(blockId);
+                const blobUrl = `${this.containerUrl}/${encodeURIComponent(this.blobName)}?comp=block&blockid=${encodedBlockId}&${this.sasToken}`;
+                const headers = new Headers({
+                    'x-ms-blob-type': 'BlockBlob',
+                    // Add other necessary headers
+                });
+
+                await fetch(blobUrl, {
+                    method: 'PUT',
+                    headers: headers,
+                    body: chunk
+                });
+            },
+
+            async finalizeUpload(blockIds) {
+                const blobUrl = `${this.containerUrl}/${encodeURIComponent(this.blobName)}?comp=blocklist&${this.sasToken}`;
+                const xmlBlockList = this.generateBlockListXml(blockIds);
+                const headers = new Headers({
+                    'Content-Type': 'application/xml',
+                    // Add other necessary headers
+                });
+
+                await fetch(blobUrl, {
+                    method: 'PUT',
+                    headers: headers,
+                    body: xmlBlockList
+                });
+            },
+
+            generateBlockListXml(blockIds) {
+                let xml = '<?xml version="1.0" encoding="utf-8"?><BlockList>';
+                blockIds.forEach(id => {
+                    xml += `<Latest>${id}</Latest>`;
+                });
+                xml += '</BlockList>';
+                return xml;
+            }
+        };
+    }
+  </script>
+  </body>
+</html>

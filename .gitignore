@@ -1,0 +1,4 @@
+__azurite*
+__queuestorage*
+__blobstorage*
+node_modules
